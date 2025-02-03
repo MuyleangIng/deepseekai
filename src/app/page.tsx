@@ -10,6 +10,8 @@ import { Sidebar, SidebarProvider } from "@/components/ui/sidebar"
 import { CodePreview } from "@/components/code-preview"
 import { FileTree } from "@/components/file-tree"
 import { ImageUpload } from "@/components/image-upload"
+import { ChatPreview } from "@/components/chat-preview"
+
 
 export interface ProjectResponse {
   projectId: string;
@@ -31,6 +33,8 @@ export default function Page() {
   const [prompt, setPrompt] = useState("")
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
+  
+  const [messages, setMessages] = useState<Message[]>([])
 
   async function handleImageAnalysis(file: File, imagePrompt: string) {
     setIsProcessing(true)
@@ -86,50 +90,84 @@ export default function Page() {
   }
 
   async function handleGenerate() {
-    if (!prompt.trim()) return;
-    setIsProcessing(true);
+    if (!prompt.trim()) return
+    setIsProcessing(true)
+    
+    // Add user message
+    setMessages(prev => [...prev, {
+      type: "user",
+      content: [{ type: 'text', content: prompt }],
+      timestamp: new Date()
+    }])
     
     try {
       const response = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
-      });
+      })
   
-      const data = await response.json();
+      const data = await response.json()
       if (!response.ok) {
-        throw new Error(data.error || "Failed to generate code");
+        throw new Error(data.error || "Failed to generate code")
       }
   
-      // Check if the response contains the expected 'files' property
-      if (!data.files || !Array.isArray(data.files)) {
-        throw new Error("Invalid response format: missing files array");
+      // Add overview message
+      if (data.overview) {
+        setMessages(prev => [...prev, {
+          type: "assistant",
+          content: [{ type: 'text', content: data.overview }],
+          timestamp: new Date()
+        }])
       }
   
-      const newFiles = data.files.map((file) => ({
-        name: file.name,
-        path: file.path,
-        content: file.content,
-      }));
+      // Add file messages with explanations
+      data.files.forEach((file: any) => {
+        setMessages(prev => [...prev, {
+          type: "assistant",
+          content: [
+            { 
+              type: 'text', 
+              content: `Generated ${file.name}:` 
+            },
+            {
+              type: 'code',
+              content: file.content,
+              language: file.name.split('.').pop(),
+              explanation: data.explanations[file.name]?.explanation
+            },
+            ...(data.explanations[file.name]?.features ? [{
+              type: 'text',
+              content: 'Features:\n' + data.explanations[file.name].features.map((f: string) => `• ${f}`).join('\n')
+            }] : [])
+          ],
+          timestamp: new Date()
+        }])
+      })
   
-      setFiles(newFiles);
-      if (newFiles.length > 0) {
-        setSelectedFile(newFiles[0]);
+      setFiles(data.files)
+      if (data.files.length > 0) {
+        setSelectedFile(data.files[0])
       }
   
-      toast({
-        title: "Success",
-        description: "Code generated successfully",
-      });
     } catch (error) {
-      console.error("Error generating code:", error);
+      console.error("Error generating code:", error)
+      setMessages(prev => [...prev, {
+        type: "assistant",
+        content: [{ 
+          type: 'text', 
+          content: `Error: ${error instanceof Error ? error.message : "Failed to generate code"}`
+        }],
+        timestamp: new Date()
+      }])
+      
       toast({
         title: "Error",
         description: error instanceof Error ? error.message : "Failed to generate code",
         variant: "destructive",
-      });
+      })
     } finally {
-      setIsProcessing(false);
+      setIsProcessing(false)
     }
   }
   const handleDeploy = async () => {
@@ -166,8 +204,15 @@ export default function Page() {
   }
 
   return (
-    <SidebarProvider>
+<SidebarProvider>
       <div className="flex h-screen bg-background">
+        <Sidebar className="w-80 border-r" side="left">
+          <div className="p-4 border-b">
+            <h2 className="font-semibold">Generation Log</h2>
+          </div>
+          <ChatPreview messages={messages} />
+        </Sidebar>
+        
         <div className="flex-1 flex flex-col">
           <header className="border-b">
             <div className="container flex items-center justify-between h-14 px-4">
@@ -185,6 +230,7 @@ export default function Page() {
               </div>
             </div>
           </header>
+          
           <main className="flex-1 overflow-auto p-4">
             <div className="max-w-4xl mx-auto space-y-6">
               <Card className="p-6">
@@ -226,36 +272,25 @@ export default function Page() {
                 </Tabs>
               </Card>
 
-              <Tabs value={activeTab}>
-                <TabsContent value="preview">
-                  <Card className="p-6">
-                    <h2 className="text-lg font-semibold mb-4">Preview</h2>
-                    {selectedFile ? (
-                      selectedFile.name.endsWith('.html') ? (
+              <Tabs value={activeTab} className="flex-1">
+                <TabsContent value="preview" className="m-0">
+                  {selectedFile && (
+                    <Card className="p-6">
+                      {selectedFile.name.endsWith('.html') ? (
                         <iframe
                           srcDoc={selectedFile.content}
-                          className="w-full h-[400px] border rounded"
-                          title="Code Preview"
+                          className="w-full h-[600px] border rounded"
+                          title="Preview"
                         />
                       ) : (
-                        <CodePreview
-                          file={selectedFile}
-                          onSave={async (filename, content) => {
-                            setFiles(files.map((f) => 
-                              f.name === filename ? { ...f, content } : f
-                            ))
-                          }}
-                        />
-                      )
-                    ) : (
-                      <p>No file selected for preview.</p>
-                    )}
-                  </Card>
+                        <CodePreview file={selectedFile} />
+                      )}
+                    </Card>
+                  )}
                 </TabsContent>
-                <TabsContent value="code">
-                  <Card className="p-6">
-                    <h2 className="text-lg font-semibold mb-4">Code</h2>
-                    {selectedFile && (
+                <TabsContent value="code" className="m-0">
+                  {selectedFile && (
+                    <Card className="p-6">
                       <CodePreview
                         file={selectedFile}
                         onSave={async (filename, content) => {
@@ -264,13 +299,14 @@ export default function Page() {
                           ))
                         }}
                       />
-                    )}
-                  </Card>
+                    </Card>
+                  )}
                 </TabsContent>
               </Tabs>
             </div>
           </main>
         </div>
+
         <Sidebar className="w-64 border-l" side="right">
           <div className="p-4 border-b">
             <h2 className="font-semibold">Generated Files</h2>
