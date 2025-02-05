@@ -1,29 +1,15 @@
-import { NextResponse } from "next/server"
-import * as fs from "fs/promises"
-import path from "path"
+import { type NextRequest, NextResponse } from "next/server"
+import { deployProject } from "@/lib/deployment"
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
+  const { files } = await request.json()
+
   try {
-    const { files } = await request.json()
-
-    // Create public and src directories
-    await fs.mkdir(path.join(process.cwd(), "public"), { recursive: true })
-    await fs.mkdir(path.join(process.cwd(), "src"), { recursive: true })
-
-    // Write files to appropriate directories
-    for (const [filePath, content] of Object.entries(files)) {
-      const fullPath = filePath.startsWith("public/")
-        ? path.join(process.cwd(), filePath)
-        : path.join(process.cwd(), "src", filePath)
-
-      await fs.mkdir(path.dirname(fullPath), { recursive: true })
-      await fs.writeFile(fullPath, content as string)
-    }
-
-    return NextResponse.json({ success: true })
+    const previewUrl = await deployProject(files)
+    return NextResponse.json({ previewUrl })
   } catch (error) {
-    console.error("Error deploying files:", error)
-    return NextResponse.json({ error: "Failed to deploy files" }, { status: 500 })
+    console.error("Error deploying project:", error)
+    return NextResponse.json({ error: "Failed to deploy project" }, { status: 500 })
   }
 }
 
